@@ -38,8 +38,10 @@ map_object create_map_object(size_t start, size_t end, size_t size,
                    .executable = 0,
                    .private = 0};
 
-  char *new_path = (char *)malloc(strlen(path));
-  strcpy(new_path, path);
+  size_t len = strlen(path) + 1;
+  char *new_path = (char *)malloc(len);
+  strncpy(new_path, path, len);
+
   mo.path = new_path;
 
   if (perm[0] == 'r') {

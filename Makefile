@@ -1,5 +1,5 @@
 CC := gcc
-CFLAGS = -Wall -Wextra -g3 -lbfd
+CFLAGS = -Wall -Wextra -O2 -lbfd 
 
 main: main.o
 	$(CC) $^ -o $@ $(CFLAGS) 
