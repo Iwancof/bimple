@@ -145,9 +145,9 @@ int main(int argc, char *argv[], char *envp[]) {
 
   if (child_pid == 0) {
     // child
-    
+
     ptrace(PTRACE_TRACEME, NULL, NULL, NULL);
-    
+
     // execute binary.
     execve(destination_path, new_argv, envp);
 
@@ -164,11 +164,11 @@ int main(int argc, char *argv[], char *envp[]) {
     exit(EXIT_FAILURE);
   }
   // child process stopped at ld.so.6:_start
-  
+
   ptrace(PTRACE_CONT, child_pid, NULL, 0);
   waitpid(child_pid, &status, 0);
   // child process stopped at user:_start
-  
+
   if (!WIFSTOPPED(status)) {
     fprintf(stderr, "[!] interrupt didn't occure(user:_start)\n");
     exit(EXIT_FAILURE);
@@ -223,7 +223,7 @@ int main(int argc, char *argv[], char *envp[]) {
     sscanf(line, "%lx-%lx %4s %lx %9s %ld %99s", &start, &end, perm, &size, dev,
            &inode, path); // is it safe?
 
-    size = end - start; // TODO: 
+    size = end - start; // TODO:
     free(dev);
 
     map_object mo = create_map_object(start, end, size, perm, path);
@@ -238,7 +238,7 @@ int main(int argc, char *argv[], char *envp[]) {
 
     printf("%s\n", mo.path);
 
-    char *bin_base = basename(strdup(mo.path)); // TODO: free it.
+    char *bin_base = basename(strdup(mo.path));           // TODO: free it.
     char *dest_base = basename(strdup(destination_path)); //
 
     if (!(strcmp(bin_base, dest_base))) {
@@ -248,7 +248,7 @@ int main(int argc, char *argv[], char *envp[]) {
         // write original binary
         long ret =
             ptrace(PTRACE_POKETEXT, child_pid, start + entry, moved_buffer[0]);
-        if(ret == -1) {
+        if (ret == -1) {
           fprintf(stderr, "Could not write original binary\n");
           exit(EXIT_FAILURE);
         }
@@ -309,7 +309,8 @@ int main(int argc, char *argv[], char *envp[]) {
     // copy data.
     fprintf(source_code, "  memcpy(dest, \"");
     for (size_t i = 0; i < (*p)->size; i++) {
-      fprintf(source_code, "\\x%hhx", (*p)->content[i]); // TODO: replace it with some smart way.
+      fprintf(source_code, "\\x%hhx",
+              (*p)->content[i]); // TODO: replace it with some smart way.
     }
     fprintf(source_code, "\", %ld);\n", (*p)->size);
 
@@ -324,7 +325,7 @@ int main(int argc, char *argv[], char *envp[]) {
           "  asm(\"movq $0x%llx, %%rbp\");"
 
           "  asm(\"movq $0x%lx, %%rax\");" // write _start address.
-          "  asm(\"push %%rax\");" // and store is to stack.
+          "  asm(\"push %%rax\");"         // and store is to stack.
 
           "  asm(\"movq $0x%llx, %%rdi\");" // restore registers.
           "  asm(\"movq $0x%llx, %%rsi\");"
