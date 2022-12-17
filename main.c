@@ -151,6 +151,7 @@ int main(int argc, char *argv[], char *envp[]) {
     ptrace(PTRACE_TRACEME, NULL, NULL, NULL);
 
     // execute binary.
+    // TODO: rpath
     execve(destination_path, new_argv, envp);
 
     fprintf(stderr, "Unreachable");
@@ -198,7 +199,7 @@ int main(int argc, char *argv[], char *envp[]) {
   }
   free(vmmap_path);
 
-  size_t vmmap_buffer_size = 0x1000;
+  size_t vmmap_buffer_size = 0x10000;
   char *vmmap_buffer = malloc(vmmap_buffer_size);
   if (fread(vmmap_buffer, 1, vmmap_buffer_size, vmmap) == vmmap_buffer_size) {
     fprintf(stderr, "extend buffer size");
@@ -263,6 +264,7 @@ int main(int argc, char *argv[], char *envp[]) {
     size_t count = remain / sizeof(long);
     for (size_t i = 0; i < count; i++) {
       // PTRACE_PEEKDATA return long value.
+      // TODO: ALSR
       read_dest[i] =
           ptrace(PTRACE_PEEKDATA, child_pid, mo.start + i * sizeof(long), NULL);
     }
@@ -275,10 +277,17 @@ int main(int argc, char *argv[], char *envp[]) {
   } while ((line = strtok_r(NULL, "\n", &token)));
 
   // make runtime loader.
-  FILE *source_code = fopen("./result.c", "w");
-  fprintf(source_code, "#include<sys/mman.h>\n");
-  fprintf(source_code, "#include<stdlib.h>\n");
-  fprintf(source_code, "#include<string.h>\n");
+  FILE *source_code = fopen("./result.c", "w"); // TODO: separate to template file
+  FILE *template = fopen("./template.c", "r");
+
+  char* template_buf = malloc(0x100);
+  size_t read_num;
+
+  do {
+    read_num = fread(template_buf, 0x1, 0x100, template);
+    fwrite(template_buf, 1, read_num, source_code);
+  } while(read_num == 0x100);
+
   fprintf(source_code, "\n");
   fprintf(source_code, "void _start() {\n");
   fprintf(source_code, "  char *dest;\n");
