@@ -1,3 +1,5 @@
+// TODO: replace this by C++ or Rust.
+
 #define PACKAGE "bimple"
 #define PACKAGE_VERSION "0.1"
 
@@ -76,54 +78,57 @@ const char insert_code[] = {
 };
 
 int main(int argc, char *argv[], char *envp[]) {
+  if (argc != 2) {
+    fprintf(stderr, "Usage: %s path_to_dynamic_binary\n", argv[0]);
+    exit(EXIT_FAILURE);
+  }
+
   bfd_init();
 
-  struct bfd *abfd = bfd_openr("./assets/target", NULL);
+  char *convert_binary = argv[1];
+
+  struct bfd *abfd = bfd_openr(convert_binary, NULL);
   if (!bfd_check_format(abfd, bfd_object)) {
     fprintf(stderr, "Failed to open binary\n");
     exit(EXIT_FAILURE);
   }
-  FILE *binary = fopen("./assets/target", "rb");
+
+  FILE *binary = fopen(convert_binary, "rb");
   if (binary == NULL) {
     perror("Failed to open binary source");
     exit(EXIT_FAILURE);
   }
+
   fseek(binary, 0, SEEK_END);
-  size_t size = ftell(binary);
-  char *buffer = (char *)malloc(size);
+  size_t binary_file_size = ftell(binary);
+  char *buffer = (char *)malloc(binary_file_size);
   rewind(binary);
 
-  fread(buffer, 1, size, binary);
+  fread(buffer, 1, binary_file_size, binary);
   fclose(binary);
-  binary = NULL;
 
   bfd_vma entry = bfd_get_start_address(abfd);
   printf("entry = 0x%lx\n", entry);
 
-  asection *text_start = bfd_get_section_by_name(abfd, ".text");
-  printf("%lx\n", text_start->filepos);
-
-  size_t cut_size =
+  size_t insert_code_size =
       (((sizeof(insert_code) - 1) / sizeof(long)) + 1) * sizeof(long);
-  printf("cutting %lx\n", cut_size);
 
-  long *moved_buffer = (long *)malloc(cut_size);
-  memcpy(moved_buffer, &buffer[entry], cut_size);
-  // printf("buf = %hhx %hhx %hhx %hhx \n", moved_buffer[0], moved_buffer[1],
-  // moved_buffer[2], moved_buffer[3]);
-  printf("buf = %lx\n", moved_buffer[0]);
+  // save old _start
+  long *moved_buffer = (long *)malloc(insert_code_size);
+  memcpy(moved_buffer, &buffer[entry], insert_code_size);
 
+  // overwrite _start
   memcpy(&buffer[entry], insert_code, sizeof(insert_code));
 
   bfd_close(abfd);
 
-  char destination_path[] = "./assets/destination_XXXXXX";
+  // make temporary file and write edited binary.
+  char destination_path[] = "/tmp/working_binary_XXXXXX";
   int fd = mkstemp(destination_path);
-
-  write(fd, buffer, size);
-
+  write(fd, buffer, binary_file_size);
   close(fd);
 
+  // change file permission.
   chmod(destination_path, 0x777);
 
   // allocate new argv
@@ -139,43 +144,48 @@ int main(int argc, char *argv[], char *envp[]) {
   }
 
   if (child_pid == 0) {
+    // child
+    
     ptrace(PTRACE_TRACEME, NULL, NULL, NULL);
-    puts("start!");
+    
+    // execute binary.
     execve(destination_path, new_argv, envp);
 
-    puts("end!");
-
+    fprintf(stderr, "Unreachable");
     exit(EXIT_FAILURE);
   }
 
   // parent
-
   int status;
   waitpid(child_pid, &status, 0);
 
   if (!WIFSTOPPED(status)) {
-    fprintf(stderr, "[!] interrupt didn't occure\n");
+    fprintf(stderr, "[!] interrupt didn't occure(ld:_start)\n");
     exit(EXIT_FAILURE);
   }
-  puts("[+] stopped");
-
   // child process stopped at ld.so.6:_start
-
+  
   ptrace(PTRACE_CONT, child_pid, NULL, 0);
   waitpid(child_pid, &status, 0);
-
   // child process stopped at user:_start
+  
+  if (!WIFSTOPPED(status)) {
+    fprintf(stderr, "[!] interrupt didn't occure(user:_start)\n");
+    exit(EXIT_FAILURE);
+  }
 
+  // save registers.
   struct user_regs_struct regs;
   struct iovec v = {.iov_base = &regs,
                     .iov_len = sizeof(struct user_regs_struct)};
 
   ptrace(PTRACE_GETREGSET, child_pid, NT_PRSTATUS, &v);
-  regs.rip -= sizeof(insert_code);
-  printf("%p\n", (void *)regs.rip);
+  regs.rip -= sizeof(insert_code); // rip indicate next of insert_code.
+  printf("[+] stopped at %p\n", (void *)regs.rip);
 
   // read all memory data.
 
+  // read maps file.
   char *vmmap_path = (char *)malloc(0x80);
   snprintf(vmmap_path, 0x80, "/proc/%d/maps", child_pid);
 
@@ -184,47 +194,43 @@ int main(int argc, char *argv[], char *envp[]) {
     perror("Could not open vmmap");
     exit(EXIT_FAILURE);
   }
-  char *vmmap_buffer = malloc(0x1000);
-  if (fread(vmmap_buffer, 1, 0x1000, vmmap) == 0x1000) {
+  free(vmmap_path);
+
+  size_t vmmap_buffer_size = 0x1000;
+  char *vmmap_buffer = malloc(vmmap_buffer_size);
+  if (fread(vmmap_buffer, 1, vmmap_buffer_size, vmmap) == vmmap_buffer_size) {
     fprintf(stderr, "extend buffer size");
     exit(EXIT_FAILURE);
   }
 
-  map_object *maps[0x100] = {NULL};
-  size_t map_count = 0;
+  map_object *maps[0x100] = {NULL}; // TODO: use extenable vector.
+  size_t map_counter = 0;
 
   char *token, *line;
   line = strtok_r(vmmap_buffer, "\n", &token);
 
-  size_t user_text = 0;
-
+  size_t user_base_addr = 0;
   do {
-    // start-end perm size dev inode path
+    // read map.
+
+    // format: start-end perm size dev inode path
     size_t start, end, size, inode;
     char perm[5], *dev, *path;
     dev = malloc(10);
     path = malloc(100);
-    strcpy(path, "");
+    strcpy(path, ""); // initialize.
 
     sscanf(line, "%lx-%lx %4s %lx %9s %ld %99s", &start, &end, perm, &size, dev,
-           &inode, path);
+           &inode, path); // is it safe?
 
-    size = end - start; // TODO:
-
+    size = end - start; // TODO: 
     free(dev);
 
     map_object mo = create_map_object(start, end, size, perm, path);
     free(path);
 
-    // puts("found map object");
-    // print_map_object("  ", &mo);
-
-    // print_map_object("  ", &mo);
-
     // read data
     size_t remain = mo.size;
-    long *read_dest = (long *)mo.content;
-
     if (remain % sizeof(long) != 0) {
       fprintf(stderr, "invalid size\n");
       exit(EXIT_FAILURE);
@@ -232,33 +238,41 @@ int main(int argc, char *argv[], char *envp[]) {
 
     printf("%s\n", mo.path);
 
-    char *bin_base = basename(strdup(mo.path)); // TODO: free it
-    char *dest_base = basename(strdup(destination_path));
+    char *bin_base = basename(strdup(mo.path)); // TODO: free it.
+    char *dest_base = basename(strdup(destination_path)); //
 
     if (!(strcmp(bin_base, dest_base))) {
-      if (user_text == 0) {
-        user_text = start;
+      if (user_base_addr == 0) { // based on first map.
+        user_base_addr = start;
+
+        // write original binary
         long ret =
             ptrace(PTRACE_POKETEXT, child_pid, start + entry, moved_buffer[0]);
-        printf("poke result = %ld\n", ret);
+        if(ret == -1) {
+          fprintf(stderr, "Could not write original binary\n");
+          exit(EXIT_FAILURE);
+        }
       }
     }
 
-    printf("%s: 0x%lx\n", bin_base, start);
+    // read tracee's memory.
+    long *read_dest = (long *)mo.content; // allocated in create_map_object
 
     size_t count = remain / sizeof(long);
     for (size_t i = 0; i < count; i++) {
+      // PTRACE_PEEKDATA return long value.
       read_dest[i] =
           ptrace(PTRACE_PEEKDATA, child_pid, mo.start + i * sizeof(long), NULL);
     }
 
-    map_object *tmp = maps[map_count] =
+    // copy to heap and add map to `maps`
+    map_object *tmp = maps[map_counter] =
         (map_object *)malloc(sizeof(map_object));
     memcpy(tmp, &mo, sizeof(map_object));
-
-    map_count += 1;
+    map_counter += 1;
   } while ((line = strtok_r(NULL, "\n", &token)));
 
+  // make runtime loader.
   FILE *source_code = fopen("./result.c", "w");
   fprintf(source_code, "#include<sys/mman.h>\n");
   fprintf(source_code, "#include<stdlib.h>\n");
@@ -268,7 +282,7 @@ int main(int argc, char *argv[], char *envp[]) {
   fprintf(source_code, "  char *dest;\n");
 
   for (map_object **p = &maps[0]; *p != NULL; p++) {
-    if ((*p)->size == 0) {
+    if ((*p)->size == 0) { // is it ok?
       continue;
     }
 
@@ -288,65 +302,59 @@ int main(int argc, char *argv[], char *envp[]) {
       flag |= MAP_PRIVATE;
     }
 
+    // for writing data, prot must have PROT_WRITE.
     fprintf(source_code, "  dest = mmap((void*)0x%lx, 0x%lx, %d, %d, -1, 0);\n",
             (*p)->start, (*p)->size, prot | PROT_WRITE, flag);
+
+    // copy data.
     fprintf(source_code, "  memcpy(dest, \"");
     for (size_t i = 0; i < (*p)->size; i++) {
-      fprintf(source_code, "\\x%hhx", (*p)->content[i]);
+      fprintf(source_code, "\\x%hhx", (*p)->content[i]); // TODO: replace it with some smart way.
     }
     fprintf(source_code, "\", %ld);\n", (*p)->size);
 
+    // back to original permission.
     fprintf(source_code, "  mprotect((void*)0x%lx, 0x%lx, %d);\n", (*p)->start,
             (*p)->size, prot);
   }
 
-  /*
+  // write register store code. and jump to user:_start.
   fprintf(source_code,
-          "asm(\"pushq $0x%x\");",
-          (int)((user_text + entry)));
-  fprintf(source_code,
-          "asm(\"pushq $0x%.8x\");",
-          (int)((user_text + entry) >> 32));
-          */
-  fprintf(source_code,
-          "asm(\"movq $0x%llx, %%rsp\");"
-          "asm(\"movq $0x%llx, %%rbp\");"
+          "  asm(\"movq $0x%llx, %%rsp\");" // at first, restore rsp.
+          "  asm(\"movq $0x%llx, %%rbp\");"
 
-          "asm(\"movq $0x%lx, %%rax\");"
-          "asm(\"push %%rax\");"
+          "  asm(\"movq $0x%lx, %%rax\");" // write _start address.
+          "  asm(\"push %%rax\");" // and store is to stack.
 
-          "asm(\"movq $0x%llx, %%rdi\");"
-          "asm(\"movq $0x%llx, %%rsi\");"
-          "asm(\"movq $0x%llx, %%rax\");"
-          "asm(\"movq $0x%llx, %%rbx\");"
-          "asm(\"movq $0x%llx, %%rcx\");"
-          "asm(\"movq $0x%llx, %%rdx\");"
-          "asm(\"movq $0x%llx, %%r8\");"
-          "asm(\"movq $0x%llx, %%r9\");"
-          "asm(\"movq $0x%llx, %%r10\");"
-          "asm(\"movq $0x%llx, %%r11\");"
-          "asm(\"movq $0x%llx, %%r12\");"
-          "asm(\"movq $0x%llx, %%r13\");"
-          "asm(\"movq $0x%llx, %%r14\");"
-          "asm(\"movq $0x%llx, %%r15\");"
+          "  asm(\"movq $0x%llx, %%rdi\");" // restore registers.
+          "  asm(\"movq $0x%llx, %%rsi\");"
+          "  asm(\"movq $0x%llx, %%rax\");"
+          "  asm(\"movq $0x%llx, %%rbx\");"
+          "  asm(\"movq $0x%llx, %%rcx\");"
+          "  asm(\"movq $0x%llx, %%rdx\");"
+          "  asm(\"movq $0x%llx, %%r8\");"
+          "  asm(\"movq $0x%llx, %%r9\");"
+          "  asm(\"movq $0x%llx, %%r10\");"
+          "  asm(\"movq $0x%llx, %%r11\");"
+          "  asm(\"movq $0x%llx, %%r12\");"
+          "  asm(\"movq $0x%llx, %%r13\");"
+          "  asm(\"movq $0x%llx, %%r14\");"
+          "  asm(\"movq $0x%llx, %%r15\");" // done.
 
-          "asm(\"ret\");",
-          regs.rsp, 
-          regs.rbp,
+          "  asm(\"ret\");", // jump to $rax(user:_start)
+          regs.rsp, regs.rbp,
 
-          user_text + entry,
+          user_base_addr + entry,
 
-          regs.rdi, regs.rsi, regs.rax, regs.rbx, regs.rcx, regs.rdx,
-          regs.r8, regs.r9, regs.r10, regs.r11, regs.r12, regs.r13, regs.r14,
-          regs.r15);
+          regs.rdi, regs.rsi, regs.rax, regs.rbx, regs.rcx, regs.rdx, regs.r8,
+          regs.r9, regs.r10, regs.r11, regs.r12, regs.r13, regs.r14, regs.r15);
 
-  printf("break %p\n", user_text + 0x1159);
-
-  fprintf(source_code, "exit(EXIT_SUCCESS);\n");
+  fprintf(source_code, "  exit(EXIT_SUCCESS);\n"); // unreachable?
   fprintf(source_code, "}\n");
 
   fclose(source_code);
 
+  /// cleanup maps.
   for (map_object **p = &maps[0]; *p != NULL; p++) {
     free_map_object(*p);
     free(*p);
