@@ -79,6 +79,7 @@ const char insert_code[] = {
     0xcc // int3
 };
 
+// TODO: separate functions.
 int main(int argc, char *argv[], char *envp[]) {
   if (argc != 2) {
     fprintf(stderr, "Usage: %s path_to_dynamic_binary\n", argv[0]);
