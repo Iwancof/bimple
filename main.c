@@ -110,6 +110,8 @@ int main(int argc, char *argv[], char *envp[]) {
   fclose(binary);
 
   bfd_vma entry = bfd_get_start_address(abfd);
+  // FIXME: get file offset instead of vm address.
+  // this leads to crash on some binaries(e.g. /usr/bin/gcc)
   printf("entry = 0x%lx\n", entry);
 
   size_t insert_code_size =
@@ -151,7 +153,7 @@ int main(int argc, char *argv[], char *envp[]) {
     ptrace(PTRACE_TRACEME, NULL, NULL, NULL);
 
     // execute binary.
-    // TODO: rpath
+    // FIXME: resolve dynamic libraries specified by relative path.
     execve(destination_path, new_argv, envp);
 
     fprintf(stderr, "Unreachable");
@@ -241,14 +243,14 @@ int main(int argc, char *argv[], char *envp[]) {
 
     printf("%s\n", mo.path);
 
-    char *bin_base = basename(strdup(mo.path));           // TODO: free it.
+    char *bin_base = basename(strdup(mo.path));           // FIXME: free it.
     char *dest_base = basename(strdup(destination_path)); //
 
-    if (!(strcmp(bin_base, dest_base))) {
+    if (!(strcmp(bin_base, dest_base))) { // FIXME: replace it with strict compare
       if (user_base_addr == 0) { // based on first map.
         user_base_addr = start;
 
-        // write original binary
+        // restore original binary
         long ret =
             ptrace(PTRACE_POKETEXT, child_pid, start + entry, moved_buffer[0]);
         if (ret == -1) {
@@ -316,6 +318,8 @@ int main(int argc, char *argv[], char *envp[]) {
     // for writing data, prot must have PROT_WRITE.
     fprintf(source_code, "  dest = mmap((void*)0x%lx, 0x%lx, %d, %d, -1, 0);\n",
             (*p)->start, (*p)->size, prot | PROT_WRITE, flag);
+    // TODO: embed it to elf sections.
+    // TODO: debug suppoort
 
     // copy data.
     fprintf(source_code, "  memcpy(dest, \"");
@@ -331,7 +335,7 @@ int main(int argc, char *argv[], char *envp[]) {
   }
 
   // write register store code. and jump to user:_start.
-  fprintf(source_code,
+  fprintf(source_code, // TODO: use setjmp
           "  asm(\"movq $0x%llx, %%rsp\");" // at first, restore rsp.
           "  asm(\"movq $0x%llx, %%rbp\");"
 
