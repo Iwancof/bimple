@@ -292,7 +292,7 @@ int main(int argc, char *argv[], char *envp[]) {
   } while(read_num == 0x100);
 
   fprintf(source_code, "\n");
-  fprintf(source_code, "void _start() {\n");
+  fprintf(source_code, "void map_objects() {\n");
   fprintf(source_code, "  char *dest;\n");
 
   for (map_object **p = &maps[0]; *p != NULL; p++) {
@@ -335,39 +335,48 @@ int main(int argc, char *argv[], char *envp[]) {
             (*p)->size, prot);
   }
 
+  fprintf(source_code, "}\n\t");
+  fprintf(source_code, "asm(\n\t");
+  fprintf(source_code, "\".global _start\\n\\t\"\n\t");
+  fprintf(source_code, "\"_start:\\n\\t\"\n\t");
+  fprintf(source_code, "\"  call map_objects\\n\\t\"\n\t");
+
   // write register store code. and jump to user:_start.
+  // TODO: restore args, argv
   fprintf(source_code, // TODO: use setjmp
-          "  asm(\"movq $0x%llx, %%rsp\");" // at first, restore rsp.
-          "  asm(\"movq $0x%llx, %%rbp\");"
+          // "  asm(\\\"movq $0x%llx, %%rsp\\\");" // at first, restore rsp.
+          "\"  movq $0x%llx, %%rbp\\n\\t\"\n\t"
 
-          "  asm(\"movq $0x%lx, %%rax\");" // write _start address.
-          "  asm(\"push %%rax\");"         // and store is to stack.
+          "\"  movq $0x%lx, %%rax\\n\\t\"\n\t" // write _start address.
+          "\"  push %%rax\\n\\t\"\n\t"         // and store is to stack.
 
-          "  asm(\"movq $0x%llx, %%rdi\");" // restore registers.
-          "  asm(\"movq $0x%llx, %%rsi\");"
-          "  asm(\"movq $0x%llx, %%rax\");"
-          "  asm(\"movq $0x%llx, %%rbx\");"
-          "  asm(\"movq $0x%llx, %%rcx\");"
-          "  asm(\"movq $0x%llx, %%rdx\");"
-          "  asm(\"movq $0x%llx, %%r8\");"
-          "  asm(\"movq $0x%llx, %%r9\");"
-          "  asm(\"movq $0x%llx, %%r10\");"
-          "  asm(\"movq $0x%llx, %%r11\");"
-          "  asm(\"movq $0x%llx, %%r12\");"
-          "  asm(\"movq $0x%llx, %%r13\");"
-          "  asm(\"movq $0x%llx, %%r14\");"
-          "  asm(\"movq $0x%llx, %%r15\");" // done.
+          "\"  movq $0x%llx, %%rdi\\n\\t\"\n\t" // restore registers.
+          "\"  movq $0x%llx, %%rsi\\n\\t\"\n\t"
+          "\"  movq $0x%llx, %%rax\\n\\t\"\n\t"
+          "\"  movq $0x%llx, %%rbx\\n\\t\"\n\t"
+          "\"  movq $0x%llx, %%rcx\\n\\t\"\n\t"
+          "\"  movq $0x%llx, %%rdx\\n\\t\"\n\t"
+          "\"  movq $0x%llx, %%r8\\n\\t\"\n\t"
+          "\"  movq $0x%llx, %%r9\\n\\t\"\n\t"
+          "\"  movq $0x%llx, %%r10\\n\\t\"\n\t"
+          "\"  movq $0x%llx, %%r11\\n\\t\"\n\t"
+          "\"  movq $0x%llx, %%r12\\n\\t\"\n\t"
+          "\"  movq $0x%llx, %%r13\\n\\t\"\n\t"
+          "\"  movq $0x%llx, %%r14\\n\\t\"\n\t"
+          "\"  movq $0x%llx, %%r15\\n\\t\"\n\t" // done.
 
-          "  asm(\"ret\");", // jump to $rax(user:_start)
-          regs.rsp, regs.rbp,
+          "\"  ret\\n\\t\"\n\t", // jump to $rax(user:_start)
+          // regs.rsp
+          regs.rbp,
 
           user_base_addr + entry,
 
           regs.rdi, regs.rsi, regs.rax, regs.rbx, regs.rcx, regs.rdx, regs.r8,
           regs.r9, regs.r10, regs.r11, regs.r12, regs.r13, regs.r14, regs.r15);
 
-  fprintf(source_code, "  exit(EXIT_SUCCESS);\n"); // unreachable?
-  fprintf(source_code, "}\n");
+  // fprintf(source_code, "  exit(EXIT_SUCCESS);\n"); // unreachable?
+  // fprintf(source_code, "}\n");
+  fprintf(source_code, ");\n\t");
 
   fclose(source_code);
 

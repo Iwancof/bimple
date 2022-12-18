@@ -8,12 +8,9 @@ Inspired by `statifier`
 ```sh
 $ make
 $ ./main target_binary
-$ musl-gcc ./result.c -nostdlib -lc -o result
+$ gcc ./result.c -nostartfiles -o result
 
 $ ./result
 ```
 
 this will be changed soon...
-
-# Currently support
-- we can call libc function.
